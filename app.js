@@ -1,16 +1,20 @@
-// API keys từ config.json
+// API keys từ config.json (cần thay bằng khóa hợp lệ)
 const API_KEYS = [
     "AIzaSyCdxcJf9F3myEQjI_1ogbS-6_0RLRtOEY8",
     "AIzaSyCp_VB-bpgQ6wEvVZBR04akkXcSVvwtoiQ",
     "AIzaSyAXlZH48sepbUXX5yV7IsnYmdMiwynWyBc",
-    // ... (thêm tất cả 60 khóa từ config.json)
-    "AIzaSyCXpqT3IPP81bmQNPfdhXRk72NkDBIYyTw"
+    "AIzaSyCTRvEKv14mwiKzG6-6cZ_o0WI3BHBl3ZI",
+    "AIzaSyDB7FnEBtoGs_BNoQx6gHOVJTwGBGgGOgA",
+    "AIzaSyAm8YrImdMCWZrh8Pot2HDs35y1gV1wQAU",
+    "AIzaSyCG4R2bDJmU3nE13ZWeuusLDCBxfBOjzFE",
+    "AIzaSyAnG2PgKsyyeWZeH6fGti-UzNHx2_hKF2c",
+    // Thêm các khóa API hợp lệ từ Google Cloud Console
 ];
 
 let PRIMARY_KEY = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
 let VERIFY_KEY = API_KEYS.find(key => key !== PRIMARY_KEY) || API_KEYS[0];
 
-// Dữ liệu giới từ (giữ nguyên)
+// Dữ liệu giới từ
 const akkusativPrepositions = [
     { prep: "durch", usage: "chỉ hướng xuyên qua một không gian hoặc nơi chốn", reason: "Giới từ 'durch' đi với Akkusativ, thường chỉ hướng xuyên qua một không gian hoặc nơi chốn, ví dụ: 'durch den Park' (qua công viên)." },
     { prep: "durch", usage: "chỉ sự thông qua một phương tiện hoặc cách thức", reason: "Giới từ 'durch' đi với Akkusativ, chỉ sự thông qua một phương tiện hoặc cách thức, ví dụ: 'durch das Telefon' (qua điện thoại)." },
@@ -100,7 +104,8 @@ let currentTranslation = "";
 let currentExplanation = "";
 let isAnswered = false;
 let reviewQuestions = JSON.parse(localStorage.getItem('wrongPrepositions') || '[]');
-const MAX_API_RETRIES = 5;
+let lastWrongQuestion = null; // Lưu câu sai cuối cùng để tránh lặp lại
+const MAX_API_RETRIES = 3;
 
 // Hiển thị popup
 function showPopup(title, message) {
@@ -124,7 +129,7 @@ function showWrongSentencesPopup() {
     } else {
         wrongSentencesList.innerHTML = '<ul>' + reviewQuestions.map((item, index) => `
             <li class="wrong-item">
-                <p><strong>${index + 1}. Câu:</strong> ${item.example}</p>
+                <p><strong>${index + 1}. Câu:</strong> ${item.example} <button class="speak-wrong-btn" onclick="speakSentence('${item.fullSentence.replace(/'/g, "\\'")}')">Nghe</button></p>
                 <p><strong>Giới từ đúng:</strong> ${item.preposition}</p>
                 <p><strong>Giới từ bạn nhập:</strong> ${item.userAnswer}</p>
                 <p><strong>Lý do:</strong> ${item.reason}</p>
@@ -208,13 +213,9 @@ function createRuleStack() {
     const stack = [];
     totalNewQuestions = akkusativPrepositions.length + dativPrepositions.length + genitivPrepositions.length + (wechselPrepositions.length * 2);
 
-    // Akkusativ
     akkusativPrepositions.forEach((_, idx) => stack.push(`akk_${idx}`));
-    // Dativ
     dativPrepositions.forEach((_, idx) => stack.push(`dat_${idx}`));
-    // Genitiv
     genitivPrepositions.forEach((_, idx) => stack.push(`gen_${idx}`));
-    // Wechsel (Akkusativ và Dativ)
     wechselPrepositions.forEach((_, idx) => {
         stack.push(`wechsel_akk_${idx}`);
         stack.push(`wechsel_dat_${idx}`);
@@ -226,11 +227,13 @@ function createRuleStack() {
         [stack[i], stack[j]] = [stack[j], stack[i]];
     }
 
+    console.log('ruleStack created:', stack);
     return stack;
 }
 
 // Tạo câu ví dụ từ quy tắc
 async function getSentenceFromRule(ruleId) {
+    console.log('getSentenceFromRule called, ruleId:', ruleId);
     const parts = ruleId.split('_');
     const ruleType = parts[0];
     let prepData, preposition, usage, reason;
@@ -255,6 +258,7 @@ async function getSentenceFromRule(ruleId) {
 Tạo một câu ví dụ đơn giản ở trình độ A1-B1 tiếng Đức sử dụng giới từ '${preposition}' với cách dùng: '${usage}'.
 Câu phải có chỗ trống để điền giới từ (dùng ___ thay cho giới từ).
 Câu ví dụ cần có ngữ cảnh rõ ràng, dễ hiểu, và phù hợp với người học tiếng Đức cơ bản.
+Sử dụng ngữ cảnh ngẫu nhiên khác nhau mỗi lần (seed: ${Math.random()}).
 Ngoài ra, cung cấp giải thích chi tiết bằng tiếng Việt về cách dùng giới từ này, bao gồm:
 - Ngữ cảnh sử dụng của câu ví dụ (câu này thường được dùng trong tình huống nào).
 - Tại sao giới từ này được dùng trong trường hợp này (liên quan đến cách và ngữ nghĩa).
@@ -274,6 +278,7 @@ Trả về JSON:
             const response = await tryWithDifferentKey(prompt, VERIFY_KEY);
             if (!response) continue;
 
+            console.log('getSentenceFromRule response:', response);
             return [
                 preposition,
                 usage,
@@ -284,7 +289,9 @@ Trả về JSON:
                 response.explanation
             ];
         } catch (error) {
+            console.warn(`Lỗi API retry ${retry + 1}: ${error}`);
             if (retry === MAX_API_RETRIES - 1) {
+                showPopup('Lỗi API', 'Không thể lấy câu mới. Vui lòng kiểm tra kết nối hoặc thử lại sau.');
                 return [
                     preposition,
                     usage,
@@ -360,22 +367,44 @@ function updateStats() {
     document.getElementById('stats').textContent = `Tổng số câu hỏi: ${totalQuestions} | Đúng: ${totalCorrect} | Sai: ${totalWrong}`;
 }
 
-// Chuyển sang câu tiếp theo (ĐÃ SỬA: Bỏ phát âm tự động)
+// Chuyển sang câu tiếp theo
 async function nextSentence() {
-    if (reviewQuestions.length > 0) {
-        const question = reviewQuestions[Math.floor(Math.random() * reviewQuestions.length)];
-        currentPreposition = question.preposition;
-        currentUsage = question.usage;
-        currentReason = question.reason;
-        currentExample = question.example;
-        currentFullSentence = question.fullSentence;
-        currentTranslation = question.translation;
-        currentExplanation = question.explanation;
-        reviewQuestions = reviewQuestions.filter(q => q.preposition !== currentPreposition || q.usage !== currentUsage);
-        localStorage.setItem('wrongPrepositions', JSON.stringify(reviewQuestions));
-    } else if (ruleStack.length > 0) {
+    console.log('nextSentence called, isAnswered:', isAnswered, 'ruleStack length:', ruleStack.length, 'reviewQuestions length:', reviewQuestions.length);
+    
+    if (ruleStack.length > 0) {
         const ruleId = ruleStack.shift();
-        [currentPreposition, currentUsage, currentReason, currentExample, currentFullSentence, currentTranslation, currentExplanation] = await getSentenceFromRule(ruleId);
+        try {
+            [currentPreposition, currentUsage, currentReason, currentExample, currentFullSentence, currentTranslation, currentExplanation] = await getSentenceFromRule(ruleId);
+        } catch (error) {
+            console.error('Lỗi trong getSentenceFromRule:', error);
+            showPopup('Lỗi', 'Không thể lấy câu mới. Vui lòng thử lại.');
+            return;
+        }
+    } else if (reviewQuestions.length > 0) {
+        const availableQuestions = reviewQuestions.filter(q => 
+            !lastWrongQuestion || (q.preposition !== lastWrongQuestion.preposition || q.usage !== lastWrongQuestion.usage)
+        );
+        if (availableQuestions.length === 0) {
+            const question = reviewQuestions[Math.floor(Math.random() * reviewQuestions.length)];
+            currentPreposition = question.preposition;
+            currentUsage = question.usage;
+            currentReason = question.reason;
+            currentExample = question.example;
+            currentFullSentence = question.fullSentence;
+            currentTranslation = question.translation;
+            currentExplanation = question.explanation;
+        } else {
+            const question = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
+            currentPreposition = question.preposition;
+            currentUsage = question.usage;
+            currentReason = question.reason;
+            currentExample = question.example;
+            currentFullSentence = question.fullSentence;
+            currentTranslation = question.translation;
+            currentExplanation = question.explanation;
+            reviewQuestions = reviewQuestions.filter(q => q.preposition !== currentPreposition || q.usage !== currentUsage);
+            localStorage.setItem('wrongPrepositions', JSON.stringify(reviewQuestions));
+        }
     } else {
         showPopup('Hoàn thành', `Bạn đã hoàn thành!\nTổng số câu hỏi: ${totalQuestions}\nĐúng: ${totalCorrect}\nSai: ${totalWrong}`);
         document.getElementById('answer').disabled = true;
@@ -387,17 +416,19 @@ async function nextSentence() {
     }
 
     document.getElementById('sentence').textContent = currentExample;
+    document.getElementById('sentence').innerHTML = currentExample; // Đảm bảo cập nhật giao diện
     document.getElementById('feedback').textContent = '';
     document.getElementById('feedback').classList.remove('correct', 'wrong');
     document.getElementById('answer').value = '';
     document.getElementById('answer').disabled = false;
     isAnswered = false;
     document.getElementById('answer').focus();
-    // Bỏ: speakSentence(currentFullSentence);
+    console.log('nextSentence completed, new sentence:', currentExample, 'preposition:', currentPreposition);
 }
 
-// Kiểm tra câu trả lời (ĐÃ SỬA: Thêm phát âm cho cả đúng và sai)
+// Kiểm tra câu trả lời
 function checkAnswer() {
+    console.log('checkAnswer called, isAnswered:', isAnswered);
     const userAnswer = document.getElementById('answer').value.trim().toLowerCase();
     if (!userAnswer) {
         showPopup('Cảnh báo', 'Vui lòng nhập giới từ!');
@@ -405,39 +436,77 @@ function checkAnswer() {
     }
 
     const isCorrect = userAnswer === currentPreposition.toLowerCase();
-    const feedbackText = `Câu hoàn chỉnh: '${currentFullSentence}' (Nghĩa: ${currentTranslation})\n\nGiải thích chi tiết:\n${currentExplanation}`;
+    const feedbackText = `Câu: ${currentFullSentence}\nNghĩa: ${currentTranslation}\nLý do: ${currentReason}`;
 
     if (isCorrect) {
         totalCorrect++;
         document.getElementById('feedback').textContent = `Đúng! 🎉\n${feedbackText}`;
         document.getElementById('feedback').classList.add('correct');
         removeCorrectAnswer(currentPreposition, currentUsage);
+        lastWrongQuestion = null;
     } else {
         totalWrong++;
-        document.getElementById('feedback').textContent = `Sai! 😔 Đáp án đúng là '${currentPreposition}'.\n${feedbackText}`;
+        document.getElementById('feedback').textContent = `Sai! 😔 Đáp án đúng: ${currentPreposition}\n${feedbackText}`;
         document.getElementById('feedback').classList.add('wrong');
+        lastWrongQuestion = { preposition: currentPreposition, usage: currentUsage };
         saveWrongAnswer(currentPreposition, currentUsage, userAnswer, currentReason, currentExample, currentFullSentence, currentTranslation, currentExplanation);
     }
 
-    speakSentence(currentFullSentence); // Phát âm sau khi kiểm tra (cả đúng và sai)
     updateStats();
     isAnswered = true;
+    speakSentence(currentFullSentence);
     document.getElementById('answer').focus();
+    console.log('checkAnswer completed, isCorrect:', isCorrect, 'isAnswered:', isAnswered);
 }
 
 // Sự kiện
-document.getElementById('nextBtn').addEventListener('click', nextSentence);
-document.getElementById('speakBtn').addEventListener('click', () => speakSentence(currentFullSentence));
-document.getElementById('viewWrongBtn').addEventListener('click', showWrongSentencesPopup);
+document.getElementById('nextBtn').addEventListener('click', () => {
+    console.log('nextBtn clicked, isAnswered:', isAnswered);
+    if (isAnswered) {
+        nextSentence();
+    } else {
+        showPopup('Cảnh báo', 'Vui lòng trả lời trước khi chuyển câu!');
+    }
+});
+
+// Sự kiện đóng popup khi nhấn ngoài
+document.getElementById('popup').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        console.log('Clicked outside popup, closing');
+        hidePopup();
+    }
+});
+
+document.getElementById('wrongSentencesPopup').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        console.log('Clicked outside wrongSentencesPopup, closing');
+        hideWrongSentencesPopup();
+    }
+});
+
+document.getElementById('speakBtn').addEventListener('click', () => {
+    console.log('speakBtn clicked');
+    speakSentence(currentFullSentence);
+});
+
+document.getElementById('viewWrongBtn').addEventListener('click', () => {
+    console.log('viewWrongBtn clicked, reviewQuestions length:', reviewQuestions.length);
+    showWrongSentencesPopup();
+});
+
 document.getElementById('clearWrongBtn').addEventListener('click', () => {
+    console.log('clearWrongBtn clicked');
     reviewQuestions = [];
     localStorage.setItem('wrongPrepositions', '[]');
     showPopup('Thông báo', 'Đã xóa lịch sử câu sai!');
 });
+
 document.getElementById('popupClose').addEventListener('click', hidePopup);
 document.getElementById('wrongSentencesPopupClose').addEventListener('click', hideWrongSentencesPopup);
+
 document.getElementById('answer').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
+        console.log('Enter pressed, isAnswered:', isAnswered);
         if (!isAnswered) {
             checkAnswer();
         } else {
@@ -448,12 +517,14 @@ document.getElementById('answer').addEventListener('keypress', (e) => {
 
 // Khởi tạo
 async function init() {
+    console.log('init started');
     await loadVoices();
     ruleStack = createRuleStack();
     totalReviewQuestions = reviewQuestions.length;
     totalQuestions = totalNewQuestions + totalReviewQuestions;
     updateStats();
-    nextSentence();
+    await nextSentence();
+    console.log('init completed');
 }
 
 init();
